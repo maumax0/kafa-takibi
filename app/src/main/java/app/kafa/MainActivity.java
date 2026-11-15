@@ -141,6 +141,9 @@ public class MainActivity extends Activity {
             topic = sb2.toString();
             pf.edit().putString("topic", topic).apply();
         }
+        loadCalib();
+        if (calib.axisOk) hint.setText("Kayitli kalibrasyon yuklendi. Kulaklik farkli takildiysa yeniden kalibre et.");
+        btnCal.setOnLongClickListener(v -> { clearCalib(); return true; });
         btnShare.setOnClickListener(v -> toggleShare());
         btnSend.setOnClickListener(v -> {
             Intent it = new Intent(Intent.ACTION_SEND);
@@ -297,6 +300,30 @@ public class MainActivity extends Activity {
         }, "mqtt").start();
     }
 
+    // ---- kalibrasyon kaydi ----
+    private void saveCalib() {
+        double[] m = calib.m;
+        getSharedPreferences("kafa", 0).edit().putString("axisfix",
+            String.format(Locale.US, "%.6f,%.6f,%.6f,%.6f", m[0], m[1], m[2], m[3])).apply();
+    }
+    private void loadCalib() {
+        String v = getSharedPreferences("kafa", 0).getString("axisfix", null);
+        if (v == null) { calib.resetAxes(); return; }
+        try {
+            String[] p = v.split(",");
+            double[] m = new double[4];
+            for (int i = 0; i < 4; i++) m[i] = Double.parseDouble(p[i]);
+            ImuCore.normalize(m);
+            calib.m = m;
+            calib.axisOk = true;
+        } catch (Exception e) { calib.resetAxes(); }
+    }
+    private void clearCalib() {
+        getSharedPreferences("kafa", 0).edit().remove("axisfix").apply();
+        calib.resetAxes();
+        hint.setText("Kayitli kalibrasyon silindi.");
+    }
+
     // ---- kalibrasyon ----
     private void startCalibration() {
         if (!running || packets == 0) { hint.setText("Once baglan."); return; }
@@ -320,11 +347,13 @@ public class MainActivity extends Activity {
             double[] m = ImuCore.buildAxisFix(nodAxis, shakeAxis);
             calStep = 0;
             if (m == null) {
+                ui.post(() -> loadCalib());
                 ui.post(() -> hint.setText("Kalibrasyon basarisiz: hareketler yetersiz veya ayni eksende. Tekrar dene."));
             } else {
                 calib.m = m; calib.axisOk = true;
+                saveCalib();
                 calib.tare(q);
-                ui.post(() -> hint.setText("Kalibrasyon tamam. Eksen kacagi duzeltildi."));
+                ui.post(() -> hint.setText("Kalibrasyon tamam ve kaydedildi."));
             }
         }
     }
