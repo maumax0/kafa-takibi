@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.view.View;
 import java.util.List;
 
@@ -12,6 +13,7 @@ public class HeadView extends View {
     private double[] shown = {1, 0, 0, 0};
     private volatile double smooth = 0.5; // 0.05 (cok yumusak) .. 1 (ham)
     private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Path path = new Path();
 
     public HeadView(Context c) { super(c); }
     public void setTarget(double[] q) { target = q; }
@@ -20,26 +22,20 @@ public class HeadView extends View {
     @Override protected void onDraw(Canvas cv) {
         cv.drawColor(Color.rgb(14, 21, 27));
         shown = ImuCore.nlerp(shown, target, smooth);
-        List<double[]> segs = ImuCore.headLines(shown);
+        List<double[]> tris = ImuCore.headMesh(shown);
         float w = getWidth(), h = getHeight();
-        float sc = Math.min(w, h) / 4.3f;
+        float sc = Math.min(w, h) / 3.2f;
         float cx = w / 2, cy = h / 2;
-        for (double[] s : segs) {
-            int k = (int) s[5];
-            int a = (int) (255 * Math.max(0.15, Math.min(1, 0.6 + s[4] * 0.4)));
-            int col;
-            float sw = 2f;
-            switch (k) {
-                case 1: col = Color.rgb(255, 140, 50); sw = 7f; a = 255; break;
-                case 2: col = Color.argb(a, 70, 230, 205); sw = 3f; break;
-                case 3: col = Color.RED; break;
-                case 4: col = Color.GREEN; break;
-                case 5: col = Color.CYAN; break;
-                default: col = Color.argb(a, 150, 205, 230);
-            }
-            p.setColor(col);
-            p.setStrokeWidth(sw);
-            cv.drawLine(cx + (float) s[0] * sc, cy - (float) s[1] * sc, cx + (float) s[2] * sc, cy - (float) s[3] * sc, p);
+        p.setStyle(Paint.Style.FILL_AND_STROKE);
+        p.setStrokeWidth(1f);
+        for (double[] t : tris) {
+            path.rewind();
+            path.moveTo(cx + (float) t[0] * sc, cy - (float) t[1] * sc);
+            path.lineTo(cx + (float) t[2] * sc, cy - (float) t[3] * sc);
+            path.lineTo(cx + (float) t[4] * sc, cy - (float) t[5] * sc);
+            path.close();
+            p.setColor(Color.rgb((int) t[7], (int) t[8], (int) t[9]));
+            cv.drawPath(path, p);
         }
         postInvalidateOnAnimation();
     }
