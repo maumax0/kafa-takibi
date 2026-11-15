@@ -45,6 +45,7 @@ public class MainActivity extends Activity {
     private final ImuCore.Calib calib = new ImuCore.Calib();
     private volatile double[] lastRaw = {1, 0, 0, 0};
     private volatile long packets = 0;
+    private volatile long lastPkt = 0;
     private long tStart = 0;
 
     // kalibrasyon durumu: 0 yok, 1 duz bak, 2 sallama, 3 cevirme
@@ -157,14 +158,14 @@ public class MainActivity extends Activity {
         int i = spinner.getSelectedItemPosition();
         if (i < 0 || i >= devices.size()) return;
         final BluetoothDevice dev = devices.get(i);
-        running = true; packets = 0; tStart = System.currentTimeMillis();
+        running = true; packets = 0; tStart = System.currentTimeMillis(); lastPkt = tStart;
         btnConnect.setText("Baglantiyi kes");
         status.setText("Baglaniyor...");
         new Thread(() -> {
             BluetoothSocket s = null;
             Exception last = null;
             try {
-                
+                BluetoothAdapter.getDefaultAdapter().cancelDiscovery();
                 for (UUID u : UUIDS) {
                     try {
                         s = dev.createRfcommSocketToServiceRecord(u);
@@ -180,6 +181,15 @@ public class MainActivity extends Activity {
                 OutputStream out = s.getOutputStream();
                 InputStream in = s.getInputStream();
                 out.write(ImuCore.START); out.flush();
+                // akis kesilirse (ornegin muzik durunca) baslat komutunu tekrar gonder
+                new Thread(() -> {
+                    while (running && socket == fs) {
+                        try { Thread.sleep(2500); } catch (InterruptedException e) { break; }
+                        if (System.currentTimeMillis() - lastPkt > 2500) {
+                            try { synchronized (fs) { out.write(ImuCore.START); out.flush(); } } catch (Exception e) { break; }
+                        }
+                    }
+                }, "bt-watchdog").start();
                 ImuCore.Parser parser = new ImuCore.Parser((cnt, q) -> onImu(q));
                 byte[] buf = new byte[1024];
                 long lastKick = System.currentTimeMillis();
@@ -207,6 +217,7 @@ public class MainActivity extends Activity {
     // ---- veri akisi (arka plan evresi) ----
     private void onImu(double[] q) {
         lastRaw = q;
+        lastPkt = System.currentTimeMillis();
         packets++;
         if (packets == 1) calib.tare(q);
         // kalibrasyon adimlari
@@ -256,7 +267,9 @@ public class MainActivity extends Activity {
         public void run() {
             double[] e = ImuCore.euler(calib.head(lastRaw));
             readout.setText(String.format("roll %4.0f  pitch %4.0f  yaw %4.0f", e[0], e[1], e[2]));
-            if (running && packets > 0) {
+            if (running && socket != null && System.currentTimeMillis() - lastPkt > 3000) {
+                status.setText(packets == 0 ? "Bagli. IMU verisi yok: bir muzik/medya baslat, iki kulaklik da kulakta olsun." : "Veri durdu. Medya calarken akis yeniden baslar.");
+            } else if (running && packets > 0) {
                 double sec = Math.max(1, (System.currentTimeMillis() - tStart) / 1000.0);
                 status.setText(String.format("Canli: %d paket, ~%.0f Hz%s", packets, packets / sec, calib.axisOk ? ", eksen kalibreli" : ""));
             }
