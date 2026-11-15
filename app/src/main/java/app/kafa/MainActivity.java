@@ -6,6 +6,8 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothSocket;
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -26,12 +28,22 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.util.Locale;
 import java.util.UUID;
 
 public class MainActivity extends Activity {
     private static final UUID[] UUIDS = {
         UUID.fromString("00000000-deca-fade-deca-deafdecacafe"),
         UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")};
+
+    private static final String PAGES = "https://maumax0.github.io/kafa-takibi/";
+    private Button btnShare, btnSend;
+    private TextView shareInfo;
+    private volatile boolean sharing = false;
+    private volatile double[] headQ = {1, 0, 0, 0};
+    private String topic;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private HeadView head;
@@ -93,6 +105,15 @@ public class MainActivity extends Activity {
         r2.addView(btnCal, lp());
         root.addView(r2);
 
+        LinearLayout r3 = row();
+        btnShare = button("Paylas: Kapali");
+        btnSend = button("Linki gonder");
+        r3.addView(btnShare, lp());
+        r3.addView(btnSend, lp());
+        root.addView(r3);
+        shareInfo = text("", 11, Color.rgb(160, 180, 195));
+        root.addView(shareInfo);
+
         TextView sl = text("Yumusatma", 12, Color.rgb(160, 180, 195));
         root.addView(sl);
         SeekBar sb = new SeekBar(this);
@@ -110,6 +131,23 @@ public class MainActivity extends Activity {
         btnConnect.setOnClickListener(v -> { if (running) disconnect(); else connect(); });
         btnTare.setOnClickListener(v -> { calib.tare(lastRaw); hint.setText("Sifirlandi: su anki durus ileri bakis."); });
         btnCal.setOnClickListener(v -> startCalibration());
+        SharedPreferences pf = getSharedPreferences("kafa", 0);
+        topic = pf.getString("topic", null);
+        if (topic == null) {
+            String al = "abcdefghjkmnpqrstuvwxyz23456789";
+            SecureRandom rnd = new SecureRandom();
+            StringBuilder sb2 = new StringBuilder();
+            for (int k = 0; k < 10; k++) sb2.append(al.charAt(rnd.nextInt(al.length())));
+            topic = sb2.toString();
+            pf.edit().putString("topic", topic).apply();
+        }
+        btnShare.setOnClickListener(v -> toggleShare());
+        btnSend.setOnClickListener(v -> {
+            Intent it = new Intent(Intent.ACTION_SEND);
+            it.setType("text/plain");
+            it.putExtra(Intent.EXTRA_TEXT, link());
+            startActivity(Intent.createChooser(it, "Linki gonder"));
+        });
 
         ensurePermission();
         ui.post(tickUi);
@@ -225,7 +263,38 @@ public class MainActivity extends Activity {
         if (st == 2 && nodCap != null) nodCap.add(calib.delta(q));
         if (st == 3 && shakeCap != null) shakeCap.add(calib.delta(q));
         if (st != 0 && now >= calEnd) advanceCalibration(q);
-        head.setTarget(calib.head(q));
+        double[] hq = calib.head(q);
+        headQ = hq;
+        head.setTarget(hq);
+    }
+
+    // ---- canli paylasim (MQTT) ----
+    private String link() { return PAGES + "#" + topic; }
+
+    private void toggleShare() {
+        if (sharing) { sharing = false; btnShare.setText("Paylas: Kapali"); shareInfo.setText(""); return; }
+        sharing = true;
+        btnShare.setText("Paylas: Acik");
+        shareInfo.setText("Yayina baglaniyor...");
+        new Thread(() -> {
+            MqttPub m = new MqttPub();
+            try {
+                m.connect("broker.hivemq.com", 1883, "kafa-" + topic);
+                ui.post(() -> shareInfo.setText("Yayinda: " + link()));
+                while (sharing) {
+                    double[] q = headQ;
+                    String msg = String.format(Locale.US, "%.4f,%.4f,%.4f,%.4f", q[0], q[1], q[2], q[3]);
+                    m.publish("kafatakip/" + topic, msg.getBytes(StandardCharsets.UTF_8));
+                    Thread.sleep(50);
+                }
+            } catch (Exception e) {
+                final String em = String.valueOf(e.getMessage());
+                sharing = false;
+                ui.post(() -> { shareInfo.setText("Paylasim hatasi: " + em); btnShare.setText("Paylas: Kapali"); });
+            } finally {
+                m.close();
+            }
+        }, "mqtt").start();
     }
 
     // ---- kalibrasyon ----
@@ -276,5 +345,5 @@ public class MainActivity extends Activity {
         }
     };
 
-    @Override protected void onDestroy() { disconnect(); super.onDestroy(); }
+    @Override protected void onDestroy() { sharing = false; disconnect(); super.onDestroy(); }
 }
