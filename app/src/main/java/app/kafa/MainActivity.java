@@ -164,7 +164,7 @@ public class MainActivity extends Activity {
             BluetoothSocket s = null;
             Exception last = null;
             try {
-                BluetoothAdapter.getDefaultAdapter().cancelDiscovery();
+                
                 for (UUID u : UUIDS) {
                     try {
                         s = dev.createRfcommSocketToServiceRecord(u);
