@@ -272,4 +272,68 @@ public class ImuCore {
         double pa = 1 / (1 - va[0] * 0.1), pb = 1 / (1 - vb[0] * 0.1);
         out.add(new double[]{va[1] * pa, va[2] * pa, vb[1] * pb, vb[2] * pb, (va[0] + vb[0]) / 2, kind});
     }
+
+    // ---------- dolu (golgeli) kafa modeli ----------
+    /** Uclu: {x1,y1,x2,y2,x3,y3,derinlik,r,g,b}. Arkadan one siralidir. */
+    public static List<double[]> headMesh(double[] q) {
+        double[][] R = matrix(q);
+        double ct = Math.toRadians(9);
+        List<double[]> out = new ArrayList<>();
+        int[] skin = {232, 184, 148}, dark = {40, 36, 40}, white = {243, 243, 246}, teal = {30, 160, 150}, hair = {58, 44, 38}, lip = {170, 90, 90}, neck = {205, 160, 128}, nose = {222, 170, 134};
+        ell(out, R, ct, new double[]{-0.1, 0, -1.4}, new double[]{0.5, 0.42, 0.55}, neck, -90, 90, 14, 10);
+        ell(out, R, ct, new double[]{0, 0, 0}, new double[]{1.05, 0.88, 1.15}, skin, -90, 90, 22, 18);
+        int h0 = out.size();
+        ell(out, R, ct, new double[]{-0.07, 0, 0.03}, new double[]{1.06, 0.9, 1.17}, hair, 28, 90, 22, 10);
+        for (int k = h0; k < out.size(); k++) out.get(k)[6] += 0.25; // sac, derinlik siralamasinda ustte kalsin
+        ell(out, R, ct, new double[]{1.04, 0, -0.1}, new double[]{0.24, 0.12, 0.2}, nose, -90, 90, 8, 8);
+        for (int s = -1; s <= 1; s += 2) {
+            ell(out, R, ct, new double[]{0.93, s * 0.35, 0.2}, new double[]{0.09, 0.09, 0.09}, dark, -90, 90, 6, 6);
+            ell(out, R, ct, new double[]{0.02, s * 0.86, -0.05}, new double[]{0.12, 0.08, 0.22}, skin, -90, 90, 8, 6);
+            ell(out, R, ct, new double[]{0.02, s * 0.99, -0.1}, new double[]{0.16, 0.12, 0.16}, white, -90, 90, 10, 8);
+            ell(out, R, ct, new double[]{0.05, s * 1.0, -0.5}, new double[]{0.04, 0.04, 0.34}, teal, -90, 90, 6, 5);
+        }
+        ell(out, R, ct, new double[]{0.97, 0, -0.45}, new double[]{0.05, 0.25, 0.04}, lip, -90, 90, 6, 8);
+        out.sort((a, b) -> Double.compare(a[6], b[6]));
+        return out;
+    }
+
+    private static void ell(List<double[]> out, double[][] R, double ct, double[] c, double[] r, int[] col,
+                            double latMin, double latMax, int nLat, int nLon) {
+        double[][][] g = new double[nLat + 1][nLon + 1][];
+        for (int i = 0; i <= nLat; i++) {
+            double lat = Math.toRadians(latMin + (latMax - latMin) * i / nLat);
+            for (int j = 0; j <= nLon; j++) {
+                double lon = 2 * Math.PI * j / nLon;
+                g[i][j] = new double[]{c[0] + r[0] * Math.cos(lat) * Math.cos(lon), c[1] + r[1] * Math.cos(lat) * Math.sin(lon), c[2] + r[2] * Math.sin(lat)};
+            }
+        }
+        double[] L = {0.7, -0.3, 0.6};
+        double ll = Math.sqrt(L[0] * L[0] + L[1] * L[1] + L[2] * L[2]);
+        for (int i = 0; i < nLat; i++) for (int j = 0; j < nLon; j++) {
+            double[][] t1 = {g[i][j], g[i + 1][j], g[i + 1][j + 1]}, t2 = {g[i][j], g[i + 1][j + 1], g[i][j + 1]};
+            for (double[][] t : new double[][][]{t1, t2}) {
+                double[] m = {(t[0][0] + t[1][0] + t[2][0]) / 3, (t[0][1] + t[1][1] + t[2][1]) / 3, (t[0][2] + t[1][2] + t[2][2]) / 3};
+                double[] n = {(m[0] - c[0]) / (r[0] * r[0]), (m[1] - c[1]) / (r[1] * r[1]), (m[2] - c[2]) / (r[2] * r[2])};
+                double nl = Math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+                if (nl < 1e-9) continue;
+                n = new double[]{n[0] / nl, n[1] / nl, n[2] / nl};
+                double[] vn = viewDir(rot(R, n), ct);
+                if (vn[0] < -0.02) continue; // arkaya bakan yuz
+                double sh = 0.38 + 0.62 * Math.max(0, (vn[0] * L[0] + vn[1] * L[1] + vn[2] * L[2]) / ll);
+                double[] a = proj(rot(R, t[0]), ct), b = proj(rot(R, t[1]), ct), d = proj(rot(R, t[2]), ct);
+                double depth = (a[2] + b[2] + d[2]) / 3;
+                out.add(new double[]{a[0], a[1], b[0], b[1], d[0], d[1], depth, Math.min(255, col[0] * sh), Math.min(255, col[1] * sh), Math.min(255, col[2] * sh)});
+            }
+        }
+    }
+    private static double[] viewDir(double[] p, double ct) {
+        double x2 = p[0] * Math.cos(ct) + p[2] * Math.sin(ct), z2 = -p[0] * Math.sin(ct) + p[2] * Math.cos(ct);
+        return new double[]{x2, p[1], z2};
+    }
+    /** {ekran sag (kisinin solu), ekran yukari, derinlik (izleyiciye dogru)} */
+    private static double[] proj(double[] p, double ct) {
+        double[] v = viewDir(p, ct);
+        double k = 1 / (1 - v[0] * 0.1);
+        return new double[]{v[1] * k, v[2] * k, v[0]};
+    }
 }
