@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="tr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Kafa Takibi</title>
+<style>
+:root{--bg:#0e151b;--fg:#e6edf3;--mut:#8da0b0;--acc:#3dd6c8;--line:#2a3846}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:radial-gradient(ellipse at 50% 40%,#16222c,var(--bg) 70%);color:var(--fg);font:15px/1.4 system-ui,sans-serif;display:flex;flex-direction:column;overflow:hidden;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;gap:8px}
+#st{font-size:13px;color:var(--mut);display:flex;align-items:center;gap:8px}
+#dot{width:10px;height:10px;border-radius:50%;background:#c2410c}
+#dot.ok{background:#22c55e}
+#ang{font:13px ui-monospace,monospace;color:var(--mut)}
+main{flex:1;display:grid;place-items:center;perspective:900px;min-height:0}
+#head{--s:min(54vw,46vh);width:var(--s);height:var(--s);position:relative;transform-style:preserve-3d;will-change:transform}
+.l{position:absolute;inset:0;display:grid;place-items:center;font-size:calc(var(--s)*.9);line-height:1;backface-visibility:hidden}
+.back{position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle at 40% 35%,#6b4a38,#2b1d16);transform:translateZ(-14px) rotateY(180deg);backface-visibility:hidden;margin:6%}
+footer{padding:10px 16px 16px;display:flex;flex-direction:column;gap:10px;align-items:center}
+#em{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+#em button{font-size:24px;background:#16202a;border:1px solid var(--line);border-radius:12px;padding:4px 10px;cursor:pointer}
+#em button.on{border-color:var(--acc)}
+#setup{display:none;gap:8px;align-items:center}
+#setup input{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);background:#16202a;color:var(--fg);width:200px}
+#setup button{font:inherit;padding:8px 12px;border-radius:8px;border:0;background:var(--acc);color:#06201e;font-weight:600}
+</style></head><body>
+<header><div id="st"><span id="dot"></span><span id="stx">Baglaniyor...</span></div><div id="ang">roll 0 pitch 0 yaw 0</div></header>
+<main><div id="head"></div></main>
+<footer>
+<div id="setup"><input id="tp" placeholder="Kod (linkteki # sonrasi)" autocapitalize="off"><button id="go">Izle</button></div>
+<div id="em"></div>
+</footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+<script>
+const EMOJIS=['😀','😎','🤖','🐱','🦊','👽'];
+const head=document.getElementById('head'),stx=document.getElementById('stx'),dot=document.getElementById('dot'),ang=document.getElementById('ang');
+let emoji=EMOJIS[0];
+try{emoji=localStorage.getItem('emoji')||emoji}catch(e){}
+function build(){head.innerHTML='';
+ for(let k=0;k<9;k++){const d=document.createElement('div');d.className='l';d.textContent=emoji;d.style.transform='translateZ('+(k*3)+'px)';head.appendChild(d)}
+ const b=document.createElement('div');b.className='back';head.appendChild(b);
+ const eb=document.getElementById('em');eb.innerHTML='';
+ EMOJIS.forEach(e=>{const x=document.createElement('button');x.textContent=e;if(e===emoji)x.className='on';x.onclick=()=>{emoji=e;try{localStorage.setItem('emoji',e)}catch(_){}build()};eb.appendChild(x)})}
+build();
+// kuaterniyon (w,x,y,z), bas ekseni: x ileri, y sol, z yukari
+function mat(q){const[w,x,y,z]=q;return[[1-2*(y*y+z*z),2*(x*y-w*z),2*(x*z+w*y)],[2*(x*y+w*z),1-2*(x*x+z*z),2*(y*z-w*x)],[2*(x*z-w*y),2*(y*z+w*x),1-2*(x*x+y*y)]]}
+const A=[[0,1,0],[0,0,-1],[1,0,0]]; // bas ekseni -> CSS (x sag, y asagi, z izleyiciye)
+function mm(a,b){return a.map((_,i)=>b[0].map((_,j)=>a[i][0]*b[0][j]+a[i][1]*b[1][j]+a[i][2]*b[2][j]))}
+const AT=[[0,0,1],[1,0,0],[0,-1,0]];
+function css(q){const R=mm(mm(A,mat(q)),AT);
+ return 'matrix3d('+[R[0][0],R[1][0],R[2][0],0,R[0][1],R[1][1],R[2][1],0,R[0][2],R[1][2],R[2][2],0,0,0,0,1].map(v=>v.toFixed(5)).join(',')+')'}
+function norm(q){const l=Math.hypot(...q)||1;return q.map(v=>v/l)}
+let target=[1,0,0,0],shown=[1,0,0,0];
+function euler(q){const[w,x,y,z]=q;return[Math.atan2(2*(w*x+y*z),1-2*(x*x+y*y)),Math.asin(Math.max(-1,Math.min(1,2*(w*y-z*x)))),Math.atan2(2*(w*z+x*y),1-2*(y*y+z*z))].map(a=>Math.round(a*180/Math.PI))}
+function frame(){
+ let d=shown[0]*target[0]+shown[1]*target[1]+shown[2]*target[2]+shown[3]*target[3];const s=d<0?-1:1;
+ shown=norm(shown.map((v,i)=>v*0.65+s*target[i]*0.35));
+ head.style.transform=css(shown);
+ const e=euler(shown);ang.textContent='roll '+e[0]+' pitch '+e[1]+' yaw '+e[2];
+ requestAnimationFrame(frame)}
+requestAnimationFrame(frame);
+window.setQ=q=>{target=norm(q)};
+function setStatus(ok,t){dot.className=ok?'ok':'';stx.textContent=t}
+let last=0;
+function start(topic){
+ document.getElementById('setup').style.display='none';
+ if(typeof mqtt==='undefined'){setStatus(false,'Kutuphane yuklenemedi');return}
+ const c=mqtt.connect('wss://broker.hivemq.com:8884/mqtt',{reconnectPeriod:2000,connectTimeout:8000});
+ c.on('connect',()=>{setStatus(false,'Baglandi, veri bekleniyor...');c.subscribe('kafatakip/'+topic)});
+ c.on('reconnect',()=>setStatus(false,'Yeniden baglaniyor...'));
+ c.on('error',()=>setStatus(false,'Baglanti hatasi'));
+ c.on('message',(t,m)=>{const a=m.toString().split(',').map(Number);if(a.length===4&&a.every(isFinite)){target=norm(a);last=Date.now();setStatus(true,'Canli')}});
+ setInterval(()=>{if(last&&Date.now()-last>2500)setStatus(false,'Yayin durdu')},1000)}
+function init(){
+ const h=decodeURIComponent(location.hash.slice(1));
+ if(h==='demo'){setStatus(true,'Demo');let t=0;setInterval(()=>{t+=0.05;const y=Math.sin(t)*0.7,p=Math.sin(t*0.7)*0.4,r=Math.sin(t*1.3)*0.25;
+   const cy=Math.cos(y/2),sy=Math.sin(y/2),cp=Math.cos(p/2),sp=Math.sin(p/2),cr=Math.cos(r/2),sr=Math.sin(r/2);
+   target=[cr*cp*cy+sr*sp*sy,sr*cp*cy-cr*sp*sy,cr*sp*cy+sr*cp*sy,cr*cp*sy-sr*sp*cy]},33);return}
+ if(h){start(h)}else{document.getElementById('setup').style.display='flex';setStatus(false,'Kod gerekli');
+  document.getElementById('go').onclick=()=>{const v=document.getElementById('tp').value.trim();if(v){location.hash=v;start(v)}}}}
+init();
+</script></body></html>
